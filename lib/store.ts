@@ -30,8 +30,9 @@ function pool(): Pool {
 
 // Creates the products table the first time the app runs.
 function ready(): Promise<void> {
-  if (!g.dbReady) {
-    g.dbReady = pool()
+  let p = g.dbReady;
+  if (!p) {
+    p = pool()
       .query(`
         CREATE TABLE IF NOT EXISTS products (
           id            TEXT PRIMARY KEY,
@@ -45,13 +46,16 @@ function ready(): Promise<void> {
           created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
         )
       `)
-      .then(() => undefined)
-      .catch((err) => {
-        g.dbReady = undefined; // try again on the next request
-        throw err;
-      });
+      .then(
+        () => undefined,
+        (err: unknown) => {
+          g.dbReady = undefined; // try again on the next request
+          throw err;
+        }
+      );
+    g.dbReady = p;
   }
-  return g.dbReady;
+  return p;
 }
 
 type Row = {
