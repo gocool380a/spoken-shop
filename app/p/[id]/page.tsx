@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import { getProduct } from "@/lib/store";
 import BuyBox from "./BuyBox";
+import BuyerChat from "./BuyerChat";
 
 // The buyer-facing shop page for one product.
 export default function ProductPage({ params }: { params: Promise<{ id: string }> }) {
@@ -40,6 +41,8 @@ async function ProductDetails({ params }: { params: Promise<{ id: string }> }) {
           clientId={process.env.PAYPAL_CLIENT_ID || ""}
         />
       )}
+
+      <BuyerChat productId={product.id} productName={product.name} />
     </>
   );
 }

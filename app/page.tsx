@@ -10,6 +10,7 @@ type Listing = {
   currency: string;
   quantity: number;
   language: string;
+  priceNote?: string;
 };
 
 function formatPrice(price: number, currency: string) {
@@ -144,7 +145,7 @@ export default function SellerPage() {
         {error && <p className="mt-4 text-red-600">{error}</p>}
 
         {listing && (
-          <section className="mt-8 space-y-3 rounded-xl border border-neutral-200 bg-neutral-50 p-4">
+          <section className="mt-8 space-y-3 rounded-xl border border-neutral-200 bg-neutral-50 p-4" text-neutral-900>
             <h2 className="font-semibold">Check your listing</h2>
             <input className={field} value={listing.name}
               onChange={(e) => setListing({ ...listing, name: e.target.value })} />
@@ -161,6 +162,7 @@ export default function SellerPage() {
             <p className="text-xs text-neutral-500">
               Price · Currency · Stock — spoken in {listing.language}
             </p>
+            {listing.priceNote && <p className="text-sm text-amber-700">{listing.priceNote}</p>}
             <button onClick={publish} disabled={!!busy}
               className="w-full rounded-lg bg-green-600 py-3 font-semibold text-white hover:bg-green-700 disabled:opacity-50">
               Looks good — create my shop link
