@@ -1,7 +1,6 @@
-// Simple file-based product store.
-// Good enough for the hackathon demo. Swap for a real database (e.g. Postgres on Render) later.
-import { promises as fs } from "fs";
-import path from "path";
+// Product store backed by Postgres (Neon).
+// Reads DATABASE_URL from .env.local locally, and from Render's Environment in production.
+import { Pool } from "pg";
 import crypto from "crypto";
 
 export type Product = {
@@ -16,45 +15,104 @@ export type Product = {
   createdAt: string;
 };
 
-const DATA_DIR = path.join(process.cwd(), "data");
-const FILE = path.join(DATA_DIR, "products.json");
+// Reuse one connection pool, even when Next.js reloads code during development.
+const g = globalThis as unknown as { pgPool?: Pool; dbReady?: Promise<void> };
 
-async function readAll(): Promise<Product[]> {
-  try {
-    return JSON.parse(await fs.readFile(FILE, "utf8"));
-  } catch {
-    return [];
+function pool(): Pool {
+  if (!process.env.DATABASE_URL) {
+    throw new Error("DATABASE_URL is not set. Add it to .env.local (and to Render's Environment).");
   }
+  if (!g.pgPool) {
+    g.pgPool = new Pool({ connectionString: process.env.DATABASE_URL, max: 5 });
+  }
+  return g.pgPool;
 }
 
-async function writeAll(products: Product[]) {
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  await fs.writeFile(FILE, JSON.stringify(products, null, 2));
+// Creates the products table the first time the app runs.
+function ready(): Promise<void> {
+  if (!g.dbReady) {
+    g.dbReady = pool()
+      .query(`
+        CREATE TABLE IF NOT EXISTS products (
+          id            TEXT PRIMARY KEY,
+          name          TEXT NOT NULL,
+          description   TEXT NOT NULL DEFAULT '',
+          price         NUMERIC(10,2) NOT NULL,
+          currency      TEXT NOT NULL DEFAULT 'USD',
+          quantity      INTEGER NOT NULL DEFAULT 0,
+          language      TEXT NOT NULL DEFAULT '',
+          original_text TEXT NOT NULL DEFAULT '',
+          created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+      `)
+      .then(() => undefined)
+      .catch((err) => {
+        g.dbReady = undefined; // try again on the next request
+        throw err;
+      });
+  }
+  return g.dbReady;
+}
+
+type Row = {
+  id: string;
+  name: string;
+  description: string;
+  price: string; // Postgres returns NUMERIC as a string
+  currency: string;
+  quantity: number;
+  language: string;
+  original_text: string;
+  created_at: Date;
+};
+
+function toProduct(r: Row): Product {
+  return {
+    id: r.id,
+    name: r.name,
+    description: r.description,
+    price: Number(r.price),
+    currency: r.currency,
+    quantity: r.quantity,
+    language: r.language,
+    originalText: r.original_text,
+    createdAt: new Date(r.created_at).toISOString(),
+  };
 }
 
 export async function createProduct(
   input: Omit<Product, "id" | "createdAt">
 ): Promise<Product> {
-  const products = await readAll();
-  const product: Product = {
-    ...input,
-    id: crypto.randomBytes(4).toString("hex"),
-    createdAt: new Date().toISOString(),
-  };
-  products.push(product);
-  await writeAll(products);
-  return product;
+  await ready();
+  const { rows } = await pool().query<Row>(
+    `INSERT INTO products (id, name, description, price, currency, quantity, language, original_text)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     RETURNING *`,
+    [
+      crypto.randomBytes(4).toString("hex"),
+      input.name,
+      input.description ?? "",
+      input.price,
+      input.currency || "USD",
+      Math.max(0, Math.round(Number(input.quantity) || 0)),
+      input.language ?? "",
+      input.originalText ?? "",
+    ]
+  );
+  return toProduct(rows[0]);
 }
 
 export async function getProduct(id: string): Promise<Product | undefined> {
-  return (await readAll()).find((p) => p.id === id);
+  await ready();
+  const { rows } = await pool().query<Row>(`SELECT * FROM products WHERE id = $1`, [id]);
+  return rows[0] ? toProduct(rows[0]) : undefined;
 }
 
 export async function reduceStock(id: string, by: number) {
-  const products = await readAll();
-  const p = products.find((x) => x.id === id);
-  if (p) {
-    p.quantity = Math.max(0, p.quantity - by);
-    await writeAll(products);
-  }
+  await ready();
+  // One atomic update, so two buyers at once can't both grab the last item.
+  await pool().query(
+    `UPDATE products SET quantity = GREATEST(0, quantity - $2) WHERE id = $1`,
+    [id, by]
+  );
 }
